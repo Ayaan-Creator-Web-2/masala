@@ -14,14 +14,8 @@
         }
 
         body, html { margin: 0; padding: 0; height: 100%; font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); overflow: hidden; }
-        
-        #verification-overlay {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: var(--bg); z-index: 9999; display: flex; 
-            justify-content: center; align-items: center;
-        }
-
         .browser-container { display: flex; flex-direction: column; height: 100vh; }
+
         .tabs-container { display: flex; align-items: flex-end; gap: 2px; background: #000; padding: 6px 10px 0 10px; border-bottom: 1px solid var(--border); }
         .tab {
             padding: 8px 20px; background: var(--panel); border: 1px solid var(--border); border-bottom: none;
@@ -29,7 +23,7 @@
             display: flex; align-items: center; gap: 12px; min-width: 120px; transition: 0.2s;
         }
         .tab.active { background: var(--bg); color: var(--accent); border-top: 2px solid var(--accent); box-shadow: 0 -5px 15px var(--accent-glow); }
-        .tab-close { font-size: 16px; opacity: 0.5; margin-left: auto; }
+        .tab-close { font-size: 16px; opacity: 0.5; }
         .tab-close:hover { color: #ef4444; opacity: 1; }
         .add-tab { cursor: pointer; padding: 8px 15px; color: var(--accent); font-size: 22px; }
 
@@ -50,16 +44,12 @@
 </head>
 <body>
 
-<div id="verification-overlay">
-    <div class="home-title" style="font-size: 1.2rem;">Awaiting Authentication...</div>
-</div>
-
 <div class="browser-container">
     <div class="tabs-container" id="tabs-list">
         <div class="add-tab" onclick="createNewTab()">+</div>
     </div>
     <div class="top-bar">
-        <input type="text" class="address-bar" id="url-input" spellcheck="false" autocomplete="off" placeholder="Enter URL...">
+        <input type="text" class="address-bar" id="url-input" spellcheck="false" autocomplete="off">
         <button class="btn-cook" onclick="loadUrl()">Cook</button>
     </div>
     <div class="content-area" id="viewports">
@@ -70,24 +60,6 @@
 </div>
 
 <script>
-    // --- VERIFICATION ---
-    (function verify() {
-        const pass = 'masala.com';
-        const key = 'app_verified_user';
-        if (localStorage.getItem(key) === 'true') {
-            document.getElementById('verification-overlay').remove();
-        } else {
-            let entry = "";
-            while (entry !== pass) {
-                entry = prompt("Password:");
-                if (entry === null) continue;
-            }
-            localStorage.setItem(key, 'true');
-            document.getElementById('verification-overlay').remove();
-        }
-    })();
-
-    // --- BROWSER LOGIC ---
     const gate = 'https://script.google.com/macros/s/AKfycbwbL6CKA8NYA6gu6GBK0gvN50oEf42jyQTSK4yZwlpT2KPbMGdP2VKJNcswp_cmc51x/exec';
     let tabs = [];
     let activeTabId = null;
@@ -95,48 +67,34 @@
     function createNewTab() {
         const id = 't-' + Date.now();
         tabs.push({ id: id, url: '' });
-
         const tabEl = document.createElement('div');
         tabEl.className = 'tab';
         tabEl.id = 'label-' + id;
         tabEl.innerHTML = `New Tab <span class="tab-close" onclick="closeTab('${id}', event)">×</span>`;
         tabEl.onclick = () => switchTab(id);
         document.getElementById('tabs-list').insertBefore(tabEl, document.querySelector('.add-tab'));
-
         const ifr = document.createElement('iframe');
         ifr.className = 'viewport';
         ifr.id = 'frame-' + id;
         document.getElementById('viewports').appendChild(ifr);
-
         switchTab(id);
     }
 
     function switchTab(id) {
-        if (!id) return;
         activeTabId = id;
-
-        // Reset UI
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         document.querySelectorAll('.viewport').forEach(v => v.classList.remove('active'));
-
-        const activeLabel = document.getElementById('label-' + id);
-        const activeFrame = document.getElementById('frame-' + id);
-
-        if (activeLabel) activeLabel.classList.add('active');
-        if (activeFrame) {
-            activeFrame.classList.add('active');
-            // Toggle landing page
-            document.getElementById('home-page').style.display = activeFrame.src ? 'none' : 'flex';
-        }
-
+        document.getElementById('label-' + id).classList.add('active');
+        document.getElementById('frame-' + id).classList.add('active');
+        const frame = document.getElementById('frame-' + id);
+        document.getElementById('home-page').style.display = frame.src ? 'none' : 'flex';
         const tabData = tabs.find(t => t.id === id);
-        document.getElementById('url-input').value = tabData ? tabData.url : '';
+        document.getElementById('url-input').value = tabData.url;
     }
 
     function loadUrl() {
         let input = document.getElementById('url-input').value.trim();
         if (!input || !activeTabId) return;
-
         let finalUrl;
         const urlPattern = /^(https?:\/\/)?([\w\d-]+\.)+\w{2,}(\/.*)?$/i;
         if (urlPattern.test(input)) {
@@ -145,44 +103,71 @@
         } else {
             finalUrl = 'https://duckduckgo.com/html/?q=' + encodeURIComponent(input);
         }
-
+        
         const tabData = tabs.find(t => t.id === activeTabId);
         tabData.url = input;
-        
         const frame = document.getElementById('frame-' + activeTabId);
+        
+        // This is the key change: 
+        // We set the frame source and attempt to force the base target
         frame.src = gate + "?url=" + encodeURIComponent(finalUrl);
         
-        const label = document.getElementById('label-' + activeTabId);
-        label.innerHTML = `${input.substring(0, 10)}... <span class="tab-close" onclick="closeTab('${activeTabId}', event)">×</span>`;
-        
+        document.getElementById('label-' + activeTabId).innerHTML = `Loading... <span class="tab-close" onclick="closeTab('${activeTabId}', event)">×</span>`;
         document.getElementById('home-page').style.display = 'none';
+
+        // Listen for the load to try and strip target="_blank"
+        frame.onload = function() {
+            try {
+                const innerDoc = frame.contentDocument || frame.contentWindow.document;
+                const links = innerDoc.getElementsByTagName('a');
+                for (let link of links) {
+                    link.target = '_self'; // Forces links to open in the same iframe
+                }
+            } catch (e) {
+                console.warn("Cross-origin security blocked link re-writing. This is normal for many proxies.");
+            }
+        };
     }
 
     function closeTab(id, e) {
         e.stopPropagation();
-        
-        // Remove from array
         tabs = tabs.filter(t => t.id !== id);
-        
-        // Remove from DOM
-        const label = document.getElementById('label-' + id);
-        const frame = document.getElementById('frame-' + id);
-        if (label) label.remove();
-        if (frame) frame.remove();
-
-        // If we closed the active tab, switch to another one
-        if (activeTabId === id) {
-            if (tabs.length > 0) {
-                switchTab(tabs[tabs.length - 1].id);
-            } else {
-                createNewTab();
-            }
-        }
+        document.getElementById('label-' + id).remove();
+        document.getElementById('frame-' + id).remove();
+        if (activeTabId === id && tabs.length > 0) switchTab(tabs.id);
+        if (tabs.length === 0) createNewTab();
     }
+	// Intercepts clicks inside the iframe to keep them in the proxy
+    function interceptIframeClicks() {
+        const currentFrame = document.getElementById('frame-' + activeTabId);
+        if (!currentFrame) return;
+
+        currentFrame.onload = function() {
+            try {
+                const frameDoc = currentFrame.contentDocument || currentFrame.contentWindow.document;
+                
+                // Update tab title based on page title
+                const pageTitle = frameDoc.title || "Loaded";
+                document.getElementById('label-' + activeTabId).firstChild.textContent = pageTitle + " ";
+
+                // Intercept all link clicks
+                frameDoc.addEventListener('click', function(e) {
+                    const target = e.target.closest('a');
+                    if (target && target.href) {
+                        e.preventDefault();
+                        const newUrl = target.href;
+                        // Route the new link through your proxy
+                        currentFrame.src = gate + "?url=" + encodeURIComponent(newUrl);
+                        document.getElementById('url-input').value = newUrl;
+              0     }
+                }, true);
+            } catch (err) {
+                console.log("Cross-origin restriction or proxy prevents direct script injection.");
+            }
+        };
+    }
 
     document.getElementById('url-input').addEventListener('keypress', (e) => { if (e.key === 'Enter') loadUrl(); });
-    
-    // Start with one tab
     createNewTab();
 </script>
 </body>
